@@ -377,16 +377,22 @@ fun QueueState.removeAt(index: Int): Boolean {
 }
 
 /**
- * Drag to reorder: only upcoming tracks move, and only among themselves. A track you put somewhere
- * yourself is yours, so it stops counting as autoplay's.
+ * Drag to reorder: any track but the playing one, played or upcoming, and past the playing one too:
+ * a played track moved below it plays again later, an upcoming one moved above it counts as played.
+ * The playing track keeps playing; only its index shifts. A track you put somewhere yourself is
+ * yours, so it stops counting as autoplay's.
  */
 fun QueueState.move(
     from: Int,
     to: Int,
 ): Boolean {
-    val first = current + 1
-    if (from < first || from >= items.size || to < first || to >= items.size || from == to) return false
+    if (from !in items.indices || to !in items.indices || from == to || from == current) return false
     items.add(to, items.removeAt(from).copy(autoplay = false))
+    if (from < current && to >= current) {
+        current--
+    } else if (from > current && to <= current) {
+        current++
+    }
     return true
 }
 

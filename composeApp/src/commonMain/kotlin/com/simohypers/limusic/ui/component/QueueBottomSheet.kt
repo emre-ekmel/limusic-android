@@ -273,6 +273,10 @@ internal fun QueueList(
     val items = queueData?.data?.listTracks.orEmpty()
     val view = remember(items, current) { queueView(items, current) }
     val canEdit = !musicServiceHandler.followingRoom
+    // Played songs move here, past the playing one too. Not while this phone drives another
+    // device: that player keeps its own rules, and may only move what is still to come.
+    val link by koinInject<DeviceLinkRepository>().link.collectAsStateWithLifecycle()
+    val canMovePlayed = canEdit && !link.controlling
     val hasAutoplay = view.autoplayFrom < items.size
 
     // Lazy rows are the queue rows plus the Autoplay divider in front of autoplay's tracks.
@@ -303,8 +307,9 @@ internal fun QueueList(
     val dragDropState =
         rememberDragDropState(
             listState,
-            // Only over the upcoming rows: the playing track and the history stay put.
-            canMoveTo = { lazy -> canEdit && lazy > lazyIndex(current) && lazy <= entries.lastIndex },
+            // Any row, the playing one included as a place to pass (it is never picked up itself);
+            // only the upcoming ones when played songs can't move.
+            canMoveTo = { lazy -> canEdit && lazy in entries.indices && (canMovePlayed || lazy > lazyIndex(current)) },
         ) { from, to ->
             // Back from list positions to queue positions; the divider counts as autoplay's first row.
             fun queueIndex(i: Int) = if (hasAutoplay && i > view.autoplayFrom) i - 1 else i
@@ -369,9 +374,9 @@ internal fun QueueList(
                     if (!canEdit) return@pointerInput
                     detectDragGesturesAfterLongPress(
                         onDragStart = { offset ->
-                            // Only songs, not the divider; canMoveTo keeps it to the upcoming ones.
+                            // Only songs, not the divider and not the one playing; canMoveTo does the rest.
                             val key = dragDropState.itemAt(offset)?.key as? String
-                            if (key != null && key in currentKeys) dragDropState.onDragStart(offset)
+                            if (key != null && key != currentPlayingKey && key in currentKeys) dragDropState.onDragStart(offset)
                         },
                         onDrag = { change, offset ->
                             change.consume()
@@ -423,7 +428,9 @@ internal fun QueueList(
                         }
                         return@itemsIndexed
                     }
-                    val movable = canEdit && i > current
+                    val movable = canEdit && i != current && (canMovePlayed || i > current)
+                    // A step up or down may pass the playing row (it shifts); not into the played ones when they can't move.
+                    val firstSlot = if (canMovePlayed) 0 else current + 1
                     QueueRow(
                         index = i,
                         track = track,
@@ -434,7 +441,7 @@ internal fun QueueList(
                         liftColor = liftColor,
                         canRemove = canEdit && i != current,
                         movable = movable,
-                        onMoveUp = if (movable && i - 1 > current) ({ musicServiceHandler.moveInQueue(i, i - 1) }) else null,
+                        onMoveUp = if (movable && i - 1 >= firstSlot) ({ musicServiceHandler.moveInQueue(i, i - 1) }) else null,
                         onMoveDown = if (movable && i + 1 < items.size) ({ musicServiceHandler.moveInQueue(i, i + 1) }) else null,
                         onRemove = { musicServiceHandler.removeFromQueueIfStillThere(i, track.videoId) },
                         onPlay = {
@@ -613,7 +620,7 @@ private fun LazyItemScope.QueueRow(
     liftColor: Color,
     /** A leftward swipe may take it off the queue: false for the playing row and for a guest. */
     canRemove: Boolean,
-    /** Shows the drag handle: an upcoming row, and not for a guest. */
+    /** Shows the drag handle: any row but the playing one (only upcoming ones while driving another device), never for a guest. */
     movable: Boolean,
     onMoveUp: (() -> Unit)?,
     onMoveDown: (() -> Unit)?,

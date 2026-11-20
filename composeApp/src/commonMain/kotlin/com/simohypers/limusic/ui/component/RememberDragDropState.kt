@@ -71,7 +71,7 @@ import org.jetbrains.compose.resources.stringResource
 
 /**
  * [onSwap] gets the dragged row's lazy index before the drag and where it was dropped; [canMoveTo]
- * says which lazy indexes a row may be dragged over (headers and the playing row are not). Both are
+ * says which lazy indexes a row may be dragged over and dropped on (headers are not). Both are
  * the latest the caller passed, not the first: they read the caller's current list.
  */
 @Composable

@@ -467,6 +467,21 @@ class QueueStateTest {
         assertFalse(q.move(0, 2), "the playing track stays")
     }
 
+    @Test
+    fun moveCrossesThePlayingTrackAndKeepsItPlaying() {
+        val q = queue(song("a"), song("b"), song("now"), song("c"), current = 2)
+        assertTrue(q.move(0, 3), "a played track goes back to play later")
+        assertEquals(listOf("b", "now", "c", "a"), ids(q.items))
+        assertEquals("now", q.items[q.current].videoId)
+        assertTrue(q.move(2, 0), "an upcoming track goes into the played ones")
+        assertEquals(listOf("c", "b", "now", "a"), ids(q.items))
+        assertEquals("now", q.items[q.current].videoId)
+        assertTrue(q.move(0, 1), "within the played ones")
+        assertEquals(listOf("b", "c", "now", "a"), ids(q.items))
+        assertEquals(2, q.current)
+        assertFalse(q.move(q.current, 0), "the playing track stays")
+    }
+
     // Desktop's queue panel checks (ui/src/lib/queue.check.ts).
 
     @Test

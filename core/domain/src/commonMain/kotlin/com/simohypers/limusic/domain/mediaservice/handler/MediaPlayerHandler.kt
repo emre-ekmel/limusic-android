@@ -66,7 +66,7 @@ interface MediaPlayerHandler {
     /** The playing row's index in [queueData]. */
     fun currentOrderIndex(): Int
 
-    /** Drag to reorder: moves an upcoming row from [from] to [to]. */
+    /** Drag to reorder: moves the row at [from] to [to], played or upcoming; the playing row itself stays put and keeps playing. */
     fun moveInQueue(
         from: Int,
         to: Int,
