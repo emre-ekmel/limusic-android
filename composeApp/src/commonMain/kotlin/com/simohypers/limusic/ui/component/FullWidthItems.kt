@@ -26,6 +26,7 @@ import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -160,21 +161,290 @@ fun SongFullWidthItems(
 ) {
     val contentColor = if (forceDark) Color.White else MaterialTheme.colorScheme.onSurface
     val subtitleColor = if (forceDark) Color(0xC4FFFFFF) else MaterialTheme.colorScheme.onSurfaceVariant
-    val coroutineScope = rememberCoroutineScope()
-    val density = LocalDensity.current
-    // In dp so the swipe needs the same finger travel on every screen density.
-    val maxOffset = with(density) { 130.dp.toPx() }
-    // The detector outlives recompositions, so it reads the latest callback through this.
-    val currentOnAddToQueue by rememberUpdatedState(onAddToQueue)
-    val currentOnPlayNext by rememberUpdatedState(onPlayNext)
-    // offsetX counts towards the end side (negative: towards the start), which offset() already mirrors;
-    // drag amounts do not mirror.
     val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     val songRepository: SongRepository = koinInject<SongRepository>()
     val downloadState by songRepository
         .getSongAsFlow(songEntity?.videoId ?: track?.videoId ?: "")
         .mapNotNull { it?.downloadState }
         .collectAsState(initial = DownloadState.STATE_NOT_DOWNLOADED)
+    val itemVideoId = track?.videoId ?: songEntity?.videoId ?: ""
+    val accent = MaterialTheme.colorScheme.primary
+    // Picking fades the row in and pops the tick, rather than switching in one frame.
+    val rowTint by animateColorAsState(if (isSelected) accent.copy(alpha = 0.18f) else Color.Transparent, label = "rowTint")
+    val tickFill by animateColorAsState(if (isSelected) accent else Color.Transparent, label = "tickFill")
+    val tickRing by animateColorAsState(if (isSelected) accent else contentColor.copy(alpha = 0.6f), label = "tickRing")
+
+    SwipeToQueueBox(
+        videoId = itemVideoId,
+        // The playing row and a row being picked stay put.
+        enabled = !isPlaying && !selectionMode,
+        onAddToQueue = onAddToQueue,
+        onPlayNext = onPlayNext,
+        iconTint = contentColor,
+        modifier = modifier,
+        rowModifier =
+            Modifier
+                .background(
+                    // The theme's accent: the artwork's while "Adapt colors to artwork" is on.
+                    rowTint,
+                ).combinedClickable(
+                    onClick = {
+                        if (selectionMode) {
+                            onSelectToggle?.invoke(itemVideoId)
+                        } else {
+                            onClickListener?.invoke(itemVideoId)
+                        }
+                    },
+                    onLongClick =
+                        if (onLongClick != null) {
+                            { onLongClick(itemVideoId) }
+                        } else {
+                            null
+                        },
+                ).animateContentSize(),
+    ) {
+        Row(
+            Modifier
+                .padding(padding)
+                .fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            AnimatedVisibility(
+                visible = selectionMode,
+                enter = fadeIn() + expandHorizontally(),
+                exit = fadeOut() + shrinkHorizontally(),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier =
+                            Modifier
+                                .size(20.dp)
+                                .clip(CircleShape)
+                                .background(tickFill)
+                                .border(
+                                    width = 1.5.dp,
+                                    color = tickRing,
+                                    shape = CircleShape,
+                                ),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        androidx.compose.animation.AnimatedVisibility(
+                            visible = isSelected,
+                            enter = scaleIn(spring(dampingRatio = 0.5f, stiffness = Spring.StiffnessMedium)) + fadeIn(),
+                            exit = scaleOut() + fadeOut(),
+                        ) {
+                            Icon(
+                                imageVector = LimusicIcons.Check,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onPrimary,
+                                modifier = Modifier.size(14.dp),
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                }
+            }
+            leadingView?.invoke()
+            // A track number needs less room than a cover.
+            Box(
+                modifier = Modifier.size(if (index == null) 48.dp else 32.dp, 48.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (index == null) {
+                    // The cover stays on the playing row; the bars play over it.
+                    val thumb = track?.thumbnails?.lastOrNull()?.url ?: songEntity?.thumbnails
+                    AsyncImage(
+                        model =
+                            ImageRequest
+                                .Builder(LocalPlatformContext.current)
+                                .data(thumb)
+                                .diskCachePolicy(CachePolicy.ENABLED)
+                                .diskCacheKey(thumb)
+                                .crossfade(true)
+                                .build(),
+                        placeholder = rememberHolderPainter(),
+                        error = rememberHolderPainter(),
+                        contentDescription = null,
+                        contentScale = ContentScale.FillWidth,
+                        modifier =
+                            Modifier
+                                .fillMaxSize()
+                                .clip(rounded(4.dp)),
+                    )
+                }
+                Crossfade(isPlaying) {
+                    if (it && index == null) {
+                        Box(
+                            Modifier
+                                .fillMaxSize()
+                                .clip(rounded(4.dp))
+                                .background(Color.Black.copy(alpha = 0.45f)),
+                        ) {
+                            AudioPlayingIndicator(
+                                modifier = Modifier.fillMaxSize().padding(10.dp),
+                                color = Color.White,
+                            )
+                        }
+                    } else if (it) {
+                        AudioPlayingIndicator(
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    } else if (index == null) {
+                        Spacer(Modifier.fillMaxSize())
+                    } else {
+                        Text(
+                            text = (index + 1).toString(),
+                            color = contentColor,
+                            style = typo().titleMedium,
+                            modifier = Modifier.align(Alignment.Center),
+                        )
+                    }
+                }
+            }
+            Column(
+                Modifier
+                    .weight(1f)
+                    .padding(start = 12.dp, end = 10.dp)
+                    .align(Alignment.CenterVertically),
+                verticalArrangement = Arrangement.SpaceEvenly,
+            ) {
+                Text(
+                    text = track?.title ?: songEntity?.title ?: "",
+                    style = typo().titleSmall,
+                    maxLines = 1,
+                    color = contentColor,
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .wrapContentHeight(align = Alignment.CenterVertically)
+                            .basicMarquee(
+                                iterations = Int.MAX_VALUE,
+                                animationMode = MarqueeAnimationMode.Immediately,
+                            ).focusable(),
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    AnimatedVisibility(
+                        visible =
+                            if (songEntity != null || track != null) {
+                                downloadState == DownloadState.STATE_DOWNLOADED
+                            } else {
+                                false
+                            },
+                    ) {
+                        Row {
+                            Icon(
+                                imageVector = LimusicIcons.DownloadForOffline,
+                                tint = contentColor,
+                                contentDescription = "",
+                                modifier = Modifier.size(16.dp).padding(2.dp),
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                        }
+                    }
+                    AnimatedVisibility(
+                        visible =
+                            songEntity?.isExplicit
+                                ?: (track?.isExplicit ?: false),
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            ExplicitBadge(
+                                modifier = Modifier.size(20.dp).padding(1.dp),
+                            )
+                            Spacer(modifier = Modifier.width(5.dp))
+                        }
+                    }
+                    // Where the explicit mark goes: it says where the track came from, and the
+                    // title keeps its whole width. Read out with the row.
+                    if (suggested) {
+                        Icon(
+                            imageVector = LimusicIcons.Suggested,
+                            contentDescription = stringResource(Res.string.suggested_by_dynamic_shuffle),
+                            tint = if (forceDark) contentColor else MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(end = 4.dp).size(12.dp),
+                        )
+                    }
+                    Text(
+                        text =
+                            (
+                                track?.artists?.toListName()?.connectArtists()
+                                    ?: songEntity?.artistName?.connectArtists()
+                            ) ?: "",
+                        style = typo().bodySmall,
+                        maxLines = 1,
+                        color = subtitleColor,
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .wrapContentHeight(align = Alignment.CenterVertically)
+                                .basicMarquee(
+                                    iterations = Int.MAX_VALUE,
+                                    animationMode = MarqueeAnimationMode.Immediately,
+                                ).focusable(),
+                    )
+                }
+            }
+            if (rightView != null) {
+                rightView()
+            }
+            // The drag handle sits left of the ⋯, so the ⋯ stays where it is on every row.
+            AnimatedVisibility(shouldShowDragHandle, enter = handleEnter(isRtl), exit = handleExit(isRtl)) {
+                // 48dp tall so the handle is easy to grab with a thumb.
+                Box(
+                    modifier = Modifier.size(width = DragHandleWidth, height = 48.dp).then(dragHandleModifier),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        LimusicIcons.DragHandle,
+                        contentDescription = stringResource(Res.string.drag_to_reorder),
+                        tint = contentColor,
+                    )
+                }
+            }
+            if (trailingView != null) {
+                CompositionLocalProvider(LocalContentColor provides subtitleColor) { trailingView() }
+            }
+            // Hidden while selecting: the per-item menu moves up to the selection app bar,
+            // so one tap cannot mean both "act on this song" and "pick this song".
+            if (onMoreClickListener != null && !selectionMode) {
+                RippleIconButton(imageVector = LimusicIcons.MoreVert, fillMaxSize = false, tint = contentColor) {
+                    if (itemVideoId.isNotBlank()) onMoreClickListener.invoke(itemVideoId)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * The song rows' swipe: towards the end side adds [videoId] to the queue, towards the start side
+ * plays it next. Each side moves only when it has an action, and screen readers get both as
+ * actions, since the swipe is the row's only way to them.
+ *
+ * [rowModifier] is the moving layer's own look and tap. It sits before the swipe detector, so a
+ * drag that passes the touch slop sideways is consumed and cancels the tap; a vertical drag is
+ * never claimed, so the list around the row still scrolls.
+ */
+@Composable
+internal fun SwipeToQueueBox(
+    videoId: String,
+    enabled: Boolean,
+    onAddToQueue: ((videoId: String) -> Unit)?,
+    onPlayNext: ((videoId: String) -> Unit)?,
+    iconTint: Color,
+    modifier: Modifier = Modifier,
+    rowModifier: Modifier = Modifier,
+    content: @Composable BoxScope.() -> Unit,
+) {
+    val coroutineScope = rememberCoroutineScope()
+    val density = LocalDensity.current
+    // In dp so the swipe needs the same finger travel on every screen density.
+    val maxOffset = with(density) { 130.dp.toPx() }
+    // The detector outlives recompositions, so it reads the latest callbacks and id through these.
+    val currentOnAddToQueue by rememberUpdatedState(onAddToQueue)
+    val currentOnPlayNext by rememberUpdatedState(onPlayNext)
+    val currentVideoId by rememberUpdatedState(videoId)
+    // offsetX counts towards the end side (negative: towards the start), which offset() already mirrors;
+    // drag amounts do not mirror.
+    val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     val offsetX = remember { Animatable(initialValue = 0f) }
     var heightDp by remember { mutableStateOf(0.dp) }
 
@@ -196,7 +466,7 @@ fun SongFullWidthItems(
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(
-                        tint = contentColor,
+                        tint = iconTint,
                         imageVector = LimusicIcons.QueueMusic,
                         contentDescription = stringResource(Res.string.add_to_queue),
                     )
@@ -218,71 +488,47 @@ fun SongFullWidthItems(
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(
-                        tint = contentColor,
+                        tint = iconTint,
                         imageVector = LimusicIcons.PlayCircle,
                         contentDescription = stringResource(Res.string.play_next),
                     )
                 }
             }
         }
-        val itemVideoId = track?.videoId ?: songEntity?.videoId ?: ""
-        val swipeEnabled = !isPlaying && !selectionMode
-        // The swipes are the row's only way to these, so screen readers get them as actions.
         val addToQueueLabel = stringResource(Res.string.add_to_queue)
         val playNextLabel = stringResource(Res.string.play_next)
         val swipeActions =
-            if (!swipeEnabled) {
+            if (!enabled) {
                 emptyList()
             } else {
                 listOfNotNull(
                     onAddToQueue?.let { action ->
                         CustomAccessibilityAction(addToQueueLabel) {
-                            action(itemVideoId)
+                            action(videoId)
                             true
                         }
                     },
                     onPlayNext?.let { action ->
                         CustomAccessibilityAction(playNextLabel) {
-                            action(itemVideoId)
+                            action(videoId)
                             true
                         }
                     },
                 )
             }
-        val accent = MaterialTheme.colorScheme.primary
-        // Picking fades the row in and pops the tick, rather than switching in one frame.
-        val rowTint by animateColorAsState(if (isSelected) accent.copy(alpha = 0.18f) else Color.Transparent, label = "rowTint")
-        val tickFill by animateColorAsState(if (isSelected) accent else Color.Transparent, label = "tickFill")
-        val tickRing by animateColorAsState(if (isSelected) accent else contentColor.copy(alpha = 0.6f), label = "tickRing")
         Box(
+            // The moving layer starts from the same modifier as the row, as it always has.
             modifier =
                 modifier
                     .offset { IntOffset(offsetX.value.roundToInt(), 0) }
-                    .background(
-                        // The theme's accent: the artwork's while "Adapt colors to artwork" is on.
-                        rowTint,
-                    ).combinedClickable(
-                        onClick = {
-                            if (selectionMode) {
-                                onSelectToggle?.invoke(itemVideoId)
-                            } else {
-                                onClickListener?.invoke(itemVideoId)
-                            }
-                        },
-                        onLongClick =
-                            if (onLongClick != null) {
-                                { onLongClick(itemVideoId) }
-                            } else {
-                                null
-                            },
-                    ).animateContentSize()
+                    .then(rowModifier)
                     .semantics { if (swipeActions.isNotEmpty()) customActions = swipeActions }
                     // Keyed on every flag the body reads, so the swipe detector is torn down when
-                    // selection starts or the row starts playing, and comes back when it stops.
-                    .pointerInput(selectionMode, isPlaying, onAddToQueue != null, onPlayNext != null, isRtl) {
+                    // the row stops swiping (selection starts, it starts playing) and comes back after.
+                    .pointerInput(enabled, onAddToQueue != null, onPlayNext != null, isRtl) {
                         val canAddToQueue = onAddToQueue != null
                         val canPlayNext = onPlayNext != null
-                        if (swipeEnabled && (canAddToQueue || canPlayNext)) {
+                        if (enabled && (canAddToQueue || canPlayNext)) {
                             detectHorizontalDragGestures(
                                 onHorizontalDrag = { change, dragAmount ->
                                     // Towards the end side: rightward in LTR, leftward in RTL.
@@ -301,13 +547,9 @@ fun SongFullWidthItems(
                                 onDragEnd = {
                                     // At or past either end, not only exactly on it: the last snapTo may still be in flight.
                                     if (offsetX.value >= maxOffset) {
-                                        currentOnAddToQueue?.invoke(
-                                            track?.videoId ?: songEntity?.videoId ?: "",
-                                        )
+                                        currentOnAddToQueue?.invoke(currentVideoId)
                                     } else if (offsetX.value <= -maxOffset) {
-                                        currentOnPlayNext?.invoke(
-                                            track?.videoId ?: songEntity?.videoId ?: "",
-                                        )
+                                        currentOnPlayNext?.invoke(currentVideoId)
                                     }
                                     coroutineScope.launch {
                                         offsetX.animateTo(0f)
@@ -326,216 +568,8 @@ fun SongFullWidthItems(
                             heightDp = coordinates.size.height.toDp()
                         }
                     },
-        ) {
-            Row(
-                Modifier
-                    .padding(padding)
-                    .fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                AnimatedVisibility(
-                    visible = selectionMode,
-                    enter = fadeIn() + expandHorizontally(),
-                    exit = fadeOut() + shrinkHorizontally(),
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier =
-                                Modifier
-                                    .size(20.dp)
-                                    .clip(CircleShape)
-                                    .background(tickFill)
-                                    .border(
-                                        width = 1.5.dp,
-                                        color = tickRing,
-                                        shape = CircleShape,
-                                    ),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            androidx.compose.animation.AnimatedVisibility(
-                                visible = isSelected,
-                                enter = scaleIn(spring(dampingRatio = 0.5f, stiffness = Spring.StiffnessMedium)) + fadeIn(),
-                                exit = scaleOut() + fadeOut(),
-                            ) {
-                                Icon(
-                                    imageVector = LimusicIcons.Check,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.onPrimary,
-                                    modifier = Modifier.size(14.dp),
-                                )
-                            }
-                        }
-                        Spacer(modifier = Modifier.width(12.dp))
-                    }
-                }
-                leadingView?.invoke()
-                // A track number needs less room than a cover.
-                Box(
-                    modifier = Modifier.size(if (index == null) 48.dp else 32.dp, 48.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    if (index == null) {
-                        // The cover stays on the playing row; the bars play over it.
-                        val thumb = track?.thumbnails?.lastOrNull()?.url ?: songEntity?.thumbnails
-                        AsyncImage(
-                            model =
-                                ImageRequest
-                                    .Builder(LocalPlatformContext.current)
-                                    .data(thumb)
-                                    .diskCachePolicy(CachePolicy.ENABLED)
-                                    .diskCacheKey(thumb)
-                                    .crossfade(true)
-                                    .build(),
-                            placeholder = rememberHolderPainter(),
-                            error = rememberHolderPainter(),
-                            contentDescription = null,
-                            contentScale = ContentScale.FillWidth,
-                            modifier =
-                                Modifier
-                                    .fillMaxSize()
-                                    .clip(rounded(4.dp)),
-                        )
-                    }
-                    Crossfade(isPlaying) {
-                        if (it && index == null) {
-                            Box(
-                                Modifier
-                                    .fillMaxSize()
-                                    .clip(rounded(4.dp))
-                                    .background(Color.Black.copy(alpha = 0.45f)),
-                            ) {
-                                AudioPlayingIndicator(
-                                    modifier = Modifier.fillMaxSize().padding(10.dp),
-                                    color = Color.White,
-                                )
-                            }
-                        } else if (it) {
-                            AudioPlayingIndicator(
-                                modifier = Modifier.fillMaxSize(),
-                            )
-                        } else if (index == null) {
-                            Spacer(Modifier.fillMaxSize())
-                        } else {
-                            Text(
-                                text = (index + 1).toString(),
-                                color = contentColor,
-                                style = typo().titleMedium,
-                                modifier = Modifier.align(Alignment.Center),
-                            )
-                        }
-                    }
-                }
-                Column(
-                    Modifier
-                        .weight(1f)
-                        .padding(start = 12.dp, end = 10.dp)
-                        .align(Alignment.CenterVertically),
-                    verticalArrangement = Arrangement.SpaceEvenly,
-                ) {
-                    Text(
-                        text = track?.title ?: songEntity?.title ?: "",
-                        style = typo().titleSmall,
-                        maxLines = 1,
-                        color = contentColor,
-                        modifier =
-                            Modifier
-                                .fillMaxWidth()
-                                .wrapContentHeight(align = Alignment.CenterVertically)
-                                .basicMarquee(
-                                    iterations = Int.MAX_VALUE,
-                                    animationMode = MarqueeAnimationMode.Immediately,
-                                ).focusable(),
-                    )
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        AnimatedVisibility(
-                            visible =
-                                if (songEntity != null || track != null) {
-                                    downloadState == DownloadState.STATE_DOWNLOADED
-                                } else {
-                                    false
-                                },
-                        ) {
-                            Row {
-                                Icon(
-                                    imageVector = LimusicIcons.DownloadForOffline,
-                                    tint = contentColor,
-                                    contentDescription = "",
-                                    modifier = Modifier.size(16.dp).padding(2.dp),
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                            }
-                        }
-                        AnimatedVisibility(
-                            visible =
-                                songEntity?.isExplicit
-                                    ?: (track?.isExplicit ?: false),
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                ExplicitBadge(
-                                    modifier = Modifier.size(20.dp).padding(1.dp),
-                                )
-                                Spacer(modifier = Modifier.width(5.dp))
-                            }
-                        }
-                        // Where the explicit mark goes: it says where the track came from, and the
-                        // title keeps its whole width. Read out with the row.
-                        if (suggested) {
-                            Icon(
-                                imageVector = LimusicIcons.Suggested,
-                                contentDescription = stringResource(Res.string.suggested_by_dynamic_shuffle),
-                                tint = if (forceDark) contentColor else MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.padding(end = 4.dp).size(12.dp),
-                            )
-                        }
-                        Text(
-                            text =
-                                (
-                                    track?.artists?.toListName()?.connectArtists()
-                                        ?: songEntity?.artistName?.connectArtists()
-                                ) ?: "",
-                            style = typo().bodySmall,
-                            maxLines = 1,
-                            color = subtitleColor,
-                            modifier =
-                                Modifier
-                                    .fillMaxWidth()
-                                    .wrapContentHeight(align = Alignment.CenterVertically)
-                                    .basicMarquee(
-                                        iterations = Int.MAX_VALUE,
-                                        animationMode = MarqueeAnimationMode.Immediately,
-                                    ).focusable(),
-                        )
-                    }
-                }
-                if (rightView != null) {
-                    rightView()
-                }
-                // The drag handle sits left of the ⋯, so the ⋯ stays where it is on every row.
-                AnimatedVisibility(shouldShowDragHandle, enter = handleEnter(isRtl), exit = handleExit(isRtl)) {
-                    // 48dp tall so the handle is easy to grab with a thumb.
-                    Box(
-                        modifier = Modifier.size(width = DragHandleWidth, height = 48.dp).then(dragHandleModifier),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            LimusicIcons.DragHandle,
-                            contentDescription = stringResource(Res.string.drag_to_reorder),
-                            tint = contentColor,
-                        )
-                    }
-                }
-                if (trailingView != null) {
-                    CompositionLocalProvider(LocalContentColor provides subtitleColor) { trailingView() }
-                }
-                // Hidden while selecting: the per-item menu moves up to the selection app bar,
-                // so one tap cannot mean both "act on this song" and "pick this song".
-                if (onMoreClickListener != null && !selectionMode) {
-                    RippleIconButton(imageVector = LimusicIcons.MoreVert, fillMaxSize = false, tint = contentColor) {
-                        if (itemVideoId.isNotBlank()) onMoreClickListener.invoke(itemVideoId)
-                    }
-                }
-            }
-        }
+            content = content,
+        )
     }
 }
 

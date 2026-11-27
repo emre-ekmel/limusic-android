@@ -11,7 +11,9 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.WindowInsets
@@ -123,6 +125,7 @@ import com.simohypers.limusic.ui.component.Chip
 import com.simohypers.limusic.ui.component.EndOfPage
 import com.simohypers.limusic.ui.component.NowPlayingBottomSheet
 import com.simohypers.limusic.ui.component.ShimmerSearchItem
+import com.simohypers.limusic.ui.component.SwipeToQueueBox
 import com.simohypers.limusic.ui.component.selection.TrackSelectionBar
 import com.simohypers.limusic.ui.component.selection.keyedRows
 import com.simohypers.limusic.ui.component.selection.rememberTrackSelection
@@ -156,6 +159,7 @@ import limusic.composeapp.generated.resources.clear
 import limusic.composeapp.generated.resources.recent_searches
 import limusic.composeapp.generated.resources.search
 import limusic.composeapp.generated.resources.error_occurred
+import limusic.composeapp.generated.resources.more
 import limusic.composeapp.generated.resources.no_results_found
 import limusic.composeapp.generated.resources.playlists
 import limusic.composeapp.generated.resources.podcasts
@@ -417,6 +421,13 @@ fun SearchScreen(
                                             )
                                         }
                                     }
+                                },
+                                onAddToQueue = { sharedViewModel.addListToQueue(arrayListOf(it)) },
+                                onPlayNext = { sharedViewModel.playListNext(arrayListOf(it)) },
+                                onSongMenu = {
+                                    // The keyboard is up while typing and would cover half the sheet.
+                                    keyboardController?.hide()
+                                    onMoreClick(it.toSongEntity())
                                 },
                             )
                         }
@@ -838,17 +849,61 @@ fun SearchScreen(
     TrackSelectionBar(selection = selection, rows = rows, bottomPadding = innerPadding.calculateBottomPadding())
 }
 
+/**
+ * One YouTube item above the text suggestions. Songs and videos act like song rows elsewhere:
+ * swipe to queue or play next, long press for the song menu. Artists, albums and playlists only open.
+ */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun SuggestItemRow(
     searchResult: SearchResultType,
     onItemClick: (SearchResultType) -> Unit,
+    onAddToQueue: ((Track) -> Unit)? = null,
+    onPlayNext: ((Track) -> Unit)? = null,
+    onSongMenu: ((Track) -> Unit)? = null,
+) {
+    val track =
+        remember(searchResult) {
+            when (searchResult) {
+                is SongsResult -> searchResult.toTrack()
+                is VideosResult -> searchResult.toTrack()
+                else -> null
+            }
+        }
+    // A long press is the menu, not multi-select: the suggestions have no selection bar.
+    val openMenu: (() -> Unit)? = if (track != null && onSongMenu != null) ({ onSongMenu(track) }) else null
+    val moreLabel = stringResource(Res.string.more)
+    val tap =
+        Modifier.combinedClickable(
+            onLongClickLabel = if (openMenu != null) moreLabel else null,
+            onLongClick = openMenu,
+            onClick = { onItemClick(searchResult) },
+        )
+    if (track == null) {
+        SuggestItemBody(searchResult, Modifier.fillMaxWidth().then(tap))
+    } else {
+        SwipeToQueueBox(
+            videoId = track.videoId,
+            // No playing mark here to explain a row that will not move, so every song row swipes.
+            enabled = true,
+            onAddToQueue = onAddToQueue?.let { add -> { _: String -> add(track) } },
+            onPlayNext = onPlayNext?.let { next -> { _: String -> next(track) } },
+            iconTint = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.fillMaxWidth(),
+            rowModifier = tap,
+        ) {
+            SuggestItemBody(searchResult, Modifier.fillMaxWidth())
+        }
+    }
+}
+
+@Composable
+private fun SuggestItemBody(
+    searchResult: SearchResultType,
+    modifier: Modifier,
 ) {
     Row(
-        modifier =
-            Modifier
-                .fillMaxWidth()
-                .clickable { onItemClick(searchResult) }
-                .padding(vertical = 8.dp, horizontal = 16.dp),
+        modifier = modifier.padding(vertical = 8.dp, horizontal = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         val url =
